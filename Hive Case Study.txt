@@ -1,0 +1,514 @@
+-- ADDING JAR
+ADD JAR /opt/cloudera/parcels/CDH/lib/hive/lib/hive-hcatalog-core-1.1.0-cdh5.11.2.jar;
+
+-- Creating external table 
+create external table if not exists nyc_taxi_table(VendorID int, tpep_pickup_datetime timestamp,
+tpep_dropoff_datetime timestamp, passenger_count int, trip_distance double, RatecodeID int, store_and_fwd_flag string,
+PULocationID int, DOLocationID int, payment_type int, fare_amount double, extra double, mta_tax double, tip_amount double,
+tolls_amount double, improvement_surcharge double, total_amount double) 
+row format delimited fields terminated by ','
+location '/common_folder/nyc_taxi_data'
+tblproperties ("skip.header.line.count"="1");
+
+-- Checking top 10 imported data
+select * from nyc_taxi_table limit 10;
+
+-- BASIC DATA QUALITY CHECK
+-- 1. How many records has each TPEP provider provided?
+select vendorid, count(*) as tpep_provider_count
+from nyc_taxi_table
+group by vendorid
+order by vendorid;
+-- OBSERVATION
+-- vendor 1 has provided 527386 and vendor 2 has provided 647183 records.
+-- 1	527386
+-- 2	647183
+
+
+-- 2. The data provided is for months November and December only. 
+-- Check whether the data is consistent, and if not, identify the data quality issues. 
+-- Mention all data quality issues in comments.
+select year(tpep_pickup_datetime) as pickup_year, month(tpep_pickup_datetime) as pickup_month, count(*) as record_count from nyc_taxi_table
+group by year(tpep_pickup_datetime), month(tpep_pickup_datetime);
+-- OBSERVATION
+-- No. the data is not consistent.
+-- 2017 November has 580300 records and december has 594255 records rest 14 redords are from diffrent month or year.
+-- 	pickup_year	pickup_month	record_count
+-- 1	2003	    1	            1
+-- 2	2008	    12	            2
+-- 3	2009	    1	            1
+-- 4	2017	    11	            580300
+-- 5	2017	    10          	6
+-- 6	2017	    12	            594255
+-- 7	2018	    1	            4
+
+-- Checking for dropoff month
+select year(tpep_dropoff_datetime) as dropoff_year, month(tpep_dropoff_datetime) as pickup_month, count(*) as record_count from nyc_taxi_table
+group by year(tpep_dropoff_datetime), month(tpep_dropoff_datetime);
+-- OBSERVATION
+-- Dropoff data is also not consistent.
+-- 2017 November has 580053 records and december has 594399 records. 2018 January has 110 dropoffs.
+-- We can assume that the drop off happened on 1st January night when trip started at 31st December 2017.
+-- Rest 7 redords are from diffrent month or year.
+--  	dropoff_year	pickup_month	record_count
+-- 1	2003        	1	            1
+-- 2	2008	        12          	1
+-- 3	2009	        1           	2
+-- 4	2017	        11          	580053
+-- 5	2017	        10          	2
+-- 6	2017	        12	            594399
+-- 7	2018	        1           	110
+-- 8	2019	        4           	1
+
+
+-- Passenger_count
+select passenger_count, count(*) as record_count from nyc_taxi_table 
+group by passenger_count
+order by passenger_count;
+-- OBSERVATION
+-- 6824 records have passenger count as 0
+--  	passenger_count	record_count
+-- 1	0	            6824
+-- 2	1	            827499
+-- 3	2	            176872
+-- 4	3	            50693
+-- 5	4	            24951
+-- 6	5	            54568
+-- 7	6	            33146
+-- 8	7	            12
+-- 9	8	            3
+-- 10	9	            1
+-- We are assuming that the passender count 0 is unusual and this is error data.
+-- So, checking for the vendor who gave more error data
+select vendorid, count(*) as record_count from nyc_taxi_table
+where passenger_count = 0
+group by vendorid;
+-- OBSERVATION
+-- vendor 1 gave 6813 error passenger count
+--  	vendorid	record_count
+-- 1	2	        11
+-- 2	1	        6813
+
+-- Trip Distance
+select count(trip_distance) as trip_distance_count from nyc_taxi_table
+where trip_distance <= 0;
+-- OBSERVATION
+-- 7402 records have 0 or negative trip distance. We are assuming these records are error data.
+
+-- Checking error data vendor wise.
+select vendorid, count(*) as error_distance_count from nyc_taxi_table
+where trip_distance <= 0
+group by vendorid;
+-- OBSERVATION
+-- vendor 1 gave more error records than vendor 2
+--  	vendorid	error_distance_count
+-- 1	2	        3185
+-- 2	1	        4217
+
+-- PULocationId
+select distinct(PULocationID) from nyc_taxi_table;
+-- There are total 246 distinct pick up location id present in the data set.
+select min(PULocationID), max(PULocationID) from nyc_taxi_table;
+-- Pickup location id ranges from 1 to 265.
+
+-- DOLocationID
+select distinct(DOLocationID) from nyc_taxi_table;
+-- There are 260 distinct drop off location id present in the data set.
+select min(DOLocationID), max(DOLocationID) from nyc_taxi_table;
+-- Dropoff location id ranges from 1 to 265.
+
+
+-- RateCodeID
+select RateCodeID, count(*) as record_count from nyc_taxi_table
+group by RateCodeID
+order by RateCodeID;
+-- OBSERVATION
+-- As per data dictionary ratecode id should be from 1 to 6. But we have 9 ratecode id present with id 99.
+-- So, we are assuming this 99 code as error data.
+--  	ratecodeid	record_count
+-- 1	1	        1142278
+-- 2	2	        25338
+-- 3	3	        2562
+-- 4	4	        586
+-- 5	5	        3793
+-- 6	6	        3
+-- 7	99	        9
+
+-- Checking wrong ratecodeid data by vendor.
+select vendorid, count(*) as record_count from nyc_taxi_table
+where ratecodeid = 99
+group by vendorid;
+-- OBSERVATION
+-- vendor 1 gave 8 error records out of 9 error records.
+
+-- Store_and_fwd_flag
+select Store_and_fwd_flag, count(*) as record_count from nyc_taxi_table
+group by Store_and_fwd_flag;
+-- OBSERVATION
+-- There is no error record in this field.
+--  	store_and_fwd_flag	record_count
+-- 1	N	                1170618
+-- 2	Y	                3951
+
+-- Payment_type
+select Payment_type, count(*) record_count from nyc_taxi_table
+group by Payment_type
+order by payment_type;
+-- OBSERVATION
+-- There is mo error rows present. As per data dictionary the result is within range.
+--  	payment_type	record_count
+-- 1	1	            790256
+-- 2	2	            376374
+-- 3	3	            6274
+-- 4	4	            1665
+
+-- We are assuming that the Fare_amount cannot be 0 or negative.
+select count(fare_amount) from nyc_taxi_table
+where fare_amount <= 0;
+-- 870 trip has negative or 0 fare amount
+-- Checking wrong fare_amount data by vendor.
+select vendorid, count(fare_amount) as error_fare_amount from nyc_taxi_table
+where fare_amount <= 0
+group by vendorid;
+-- 639 error data was given by vendor 2 and 231 error data was given by vendor 1.
+--  	vendorid	error_fare_amount
+-- 1	2	        639
+-- 2	1       	231
+
+-- Extra
+select Extra, count(*) as record_count from nyc_taxi_table
+group by Extra;
+-- OBSERVATION
+-- As pre data dictionary, extra would either 0, 0.5 or 1 dollar.
+-- Other than that all other are error that is the assumption.
+--  	extra	record_count
+-- 1	-10.6	1
+-- 2	-4.5	5
+-- 3	-1	    87
+-- 4	-0.5	193
+-- 5	0	    631872
+-- 6	0.3	    36
+-- 7	0.5	    363455
+-- 8	1	    174386
+-- 9	1.5	    2
+-- 10	2	    1
+-- 11	4.5	    4502
+-- 12	4.8	    1
+-- 13	0.8	    15
+-- 14	1.3	    13
+
+select vendorid, count(*) as record_count from nyc_taxi_table
+where extra not in (0, 0.5, 1)
+group by vendorid;
+-- vendorid 2 gave 3033 wrong data while vendor 1 gave 1823 wrong data
+--  	vendorid	record_count
+-- 1	2	        3033
+-- 2	1	        1823
+
+-- MTA_tax
+select MTA_tax, count(*) as mta_tax_count from nyc_taxi_table
+group by MTA_tax;
+-- OBSERVATION
+-- As per data dictionary, MTA tax can be either 0 or 0.5 dollar. All other values are error data.
+--  	mta_tax	mta_tax_count
+-- 1	-0.5	544
+-- 2	0	    5197
+-- 3	0.5	    1168824
+-- 4	3	    3
+-- 5	11.4	1
+select vendorid, count(*) as error_mta_tax_count from nyc_taxi_table
+where MTA_tax not in (0, 0.5)
+group by vendorid;
+-- vendor 2 gave 547 error data and 1 error data was given by vendor 1.
+--  	vendorid	error_mta_tax_count
+-- 1	2	        547
+-- 2	1	        1
+
+
+-- Improvement_surcharge
+select distinct(Improvement_surcharge) from nyc_taxi_table;
+-- As per data dictionary, improvement surcharge will be 0 or 0.3 dollar. 
+-- Other values are error data is the assumption.
+--  	improvement_surcharge
+-- 1	-0.3
+-- 2	0
+-- 3	0.3
+-- 4	1
+select vendorid, count(*) as error_improvement_surcharge_count from nyc_taxi_table
+where improvement_surcharge not in (0, 0.3)
+group by vendorid;
+-- OBSERVATION
+-- vendor 2 gave 562 error data
+--  	vendorid	error_improvement_surcharge_count
+-- 1	2	        562
+
+-- Tip_amount
+select count(tip_amount) as error_tip_count from nyc_taxi_table
+where tip_amount < 0;
+-- 4 records have negative tip amount. These are error data as tip amount cannot be negative.
+select vendorid, count(*) as error_tip_count from nyc_taxi_table
+where tip_amount < 0
+group by vendorid;
+-- vendor 2 gave 4 error data
+--  	vendorid	error_tip_count
+-- 1	2	        4
+
+-- Tolls_amount 
+select count(Tolls_amount) as error_toll_count from nyc_taxi_table
+where Tolls_amount < 0;
+-- 3 records have negative tolls amount. We are assuming that the tolls amount cannot be negative.
+select vendorid, count(*) as error_tolls_count from nyc_taxi_table
+where tolls_amount < 0
+group by vendorid;
+-- vendor 2 gave 3 error data
+--  	vendorid	error_tolls_count
+-- 1	2	        3
+
+-- Total_amount
+select count(total_amount) as error_total_count from nyc_taxi_table
+where total_amount <= 0;
+-- 681 records have negative total amount. We are assuming that the total amount cannot be 0 or negative.
+select vendorid, count(*) as error_total_count from nyc_taxi_table
+where total_amount <= 0
+group by vendorid;
+-- vendor 2 gave 639 error data and vendor 1 gave 42 error data.
+--  	vendorid	error_total_count
+-- 1	2	        639
+-- 2	1	        42
+
+-- Checking pickup time and dropoff time
+select vendorid, count(*) as error_time_count from nyc_taxi_table
+where tpep_dropoff_datetime < tpep_pickup_datetime
+group by vendorid;
+-- There are 73 records are there where pickup time is greater than dropoff time.
+-- All the 73 recordsare provided by vendor 1.
+--  	vendorid	error_time_count
+-- 1	1	        73
+
+
+-- Checking for error data
+select vendorid, count(*) as error_count
+from nyc_taxi_table
+where year(tpep_pickup_datetime) != 2017 
+or month(tpep_pickup_datetime) not in (11,12)
+or year(tpep_dropoff_datetime) != 2017
+or month(tpep_dropoff_datetime) not in (11,12)
+or tpep_dropoff_datetime < tpep_pickup_datetime
+or passenger_count  not between 1 and 10
+or trip_distance <= 0
+or ratecodeid not between 1 and 6
+or fare_amount <= 0
+or extra not in (0,0.5,1)
+or mta_tax not in (0,0.5)
+or improvement_surcharge not in (0,0.3)
+or tip_amount < 0
+or tolls_amount < 0
+or total_amount <= 0
+group by vendorid
+order by error_count desc;
+-- OBSERVATION
+-- Vendor 1 is doing bad job in providing data as most of the column has more error data provided by the vendor 1.
+--  	vendorid	error_count
+-- 1	1	        12911
+-- 2	2	        6414
+
+
+-- PARTITION THE DATA  
+-- Running partitioning commands 
+SET hive.exec.max.dynamic.partitions=100000;
+SET hive.exec.max.dynamic.partitions.pernode=100000;
+
+-- Creating partition table
+create external table if not exists nyc_taxi_assignment_anirban_pooja_partition
+(
+VendorID int, tpep_pickup_datetime timestamp,
+tpep_dropoff_datetime timestamp, passenger_count int, trip_distance double, RatecodeID int, store_and_fwd_flag string,
+PULocationID int, DOLocationID int, payment_type int, fare_amount double, extra double, mta_tax double, tip_amount double,
+tolls_amount double, improvement_surcharge double, total_amount double
+)
+partitioned by (yr int, mnth int)
+location '/user/hive/warehouse/nyc_taxi_assignment_anirban_pooja_partition';
+
+-- Inserting records into the partitioned table after filtering the error records.
+-- We are assuming passenger count will be between 1 to 10. We are considering right ranges of data based on data dictionary.
+insert overwrite table nyc_taxi_assignment_anirban_pooja_partition partition(yr, mnth)
+select VendorID, tpep_pickup_datetime ,tpep_dropoff_datetime, passenger_count, trip_distance, RatecodeID,
+store_and_fwd_flag ,PULocationID , DOLocationID , payment_type , fare_amount , extra, mta_tax, tip_amount,
+tolls_amount, improvement_surcharge, total_amount,
+year(tpep_pickup_datetime) as yr, month(tpep_pickup_datetime) as mnth
+from nyc_taxi_table
+where year(tpep_pickup_datetime) = 2017 
+and month(tpep_pickup_datetime) in (11,12)
+and year(tpep_dropoff_datetime) = 2017
+and month(tpep_dropoff_datetime) in (11,12)
+and  tpep_dropoff_datetime > tpep_pickup_datetime
+and passenger_count between 1 and 10
+and trip_distance > 0
+and ratecodeid between 1 and 6
+and fare_amount > 0
+and extra in (0,0.5,1)
+and mta_tax in (0,0.5)
+and improvement_surcharge in (0,0.3)
+and tip_amount >=0
+and tolls_amount >= 0
+and total_amount > 0;
+
+-- Creating ORC table
+create external table if not exists nyc_taxi_assignment_anirban_pooja_partition_orc
+(VendorID int, tpep_pickup_datetime timestamp,
+tpep_dropoff_datetime timestamp, passenger_count int, trip_distance double, RatecodeID int, store_and_fwd_flag string,
+PULocationID int, DOLocationID int, payment_type int, fare_amount double, extra double, mta_tax double, tip_amount double,
+tolls_amount double, improvement_surcharge double, total_amount double
+) partitioned by (yr int, mnth int)
+stored as orc location '/user/hive/warehouse/nyc_taxi_assignment_anirban_pooja_partition_orc'
+tblproperties ("orc.compress"="SNAPPY");
+
+-- Inserting data into ORC table
+insert overwrite table nyc_taxi_assignment_anirban_pooja_partition_orc partition(yr , mnth)
+select * from nyc_taxi_assignment_anirban_pooja_partition;
+
+
+-- ANALYSIS 1
+-- Compare the overall average fare per trip for November and December.
+select mnth, avg(fare_amount) as avg_fare from nyc_taxi_assignment_anirban_pooja_partition_orc
+group by mnth;
+-- OBSERVATION
+-- Both the month have almost same average.
+--  	mnth	avg_fare
+-- 1	11	    12.904701493977251
+-- 2	12	    12.696128238435191
+
+-- Explore the â€˜number of passengers per tripâ€™ - how many trips are made by each level of â€˜Passenger_countâ€™? 
+-- Do most people travel solo or with other people?
+select passenger_count, count(*) as number_of_trips from nyc_taxi_assignment_anirban_pooja_partition_orc
+group by passenger_count
+order by passenger_count;
+-- OBSERVATION
+--  	passenger_count	number_of_trips
+-- 1	1	            817062
+-- 2	2	            174788
+-- 3	3	            50185
+-- 4	4	            24686
+-- 5	5	            54026
+-- 6	6	            32877
+-- 7	7	            3
+-- Majority people travel solo. 817062 trips were made with only 1 passanger.
+
+-- Which is the most preferred mode of payment?
+select payment_type, count(*) as number_of_trips from nyc_taxi_assignment_anirban_pooja_partition_orc
+group by payment_type
+order by number_of_trips desc;
+-- OBSERVATION
+-- Most preferred mode of payment is credit card.
+--  	payment_type	number_of_trips
+-- 1	1	            779096
+-- 2	2	            368611
+-- 3	3	            4491
+-- 4	4	            1300
+
+-- What is the average tip paid per trip?
+select round(avg(tip_amount),2) as avg_tip from nyc_taxi_assignment_anirban_pooja_partition_orc;
+--  	avg_tip
+-- 1	1.83
+
+-- Compare the average tip with the 25th, 50th and 75th percentiles and comment whether the â€˜average tipâ€™ is a 
+-- representative statistic (of the central tendency) of â€˜tip amount paidâ€™. 
+select round(percentile_approx(tip_amount, 0.25),2)as tip_25th,
+round(percentile_approx(tip_amount, 0.50),2) as tip_50th,
+round(percentile_approx(tip_amount, 0.75),2) as tip_75th
+from nyc_taxi_assignment_anirban_pooja_partition_orc;
+-- Average tip is not representative of the central tendency as the median is 1.35 and the avegare is 1.83.
+--  	tip_25th	tip_50th	tip_75th
+-- 1	0	        1.36	    2.45
+
+-- Explore the â€˜Extraâ€™ (charge) variable - what fraction of total trips have an extra charge is levied?
+select sum(trip_with_extra)/sum(total_trips) as fraction_of_trips_with_extra from
+(select 1 as total_trips,
+case when extra <> 0 then 1
+else 0 END as trip_with_extra
+from nyc_taxi_assignment_anirban_pooja_partition_orc) as result;
+--  	fraction_of_trips_with_extra
+-- 1	0.4614329630393811
+-- Around 46% trips have an extra chharge levied.
+
+
+-- What is the correlation between the number of passengers on any given trip, and the tip paid per trip? 
+-- Do multiple travellers tip more compared to solo travellers? 
+select round(corr(passenger_count, tip_amount),2) as passenger_tip_correlation 
+from nyc_taxi_assignment_anirban_pooja_partition_orc;
+-- The correlation is -0.01 so there no correlation between passenger count and tip amount.
+--  	passenger_tip_correlation
+-- 1	-0.01
+select passenger_count, round(avg(tip_amount),2) as avg_tip from nyc_taxi_assignment_anirban_pooja_partition_orc
+group by passenger_count
+order by passenger_count;
+-- passenger count 5 and 7 tip more than solo traveller.
+--     passenger_count avg_tip
+-- 1	1               1.84
+-- 2	2	            1.83
+-- 3	3	            1.74
+-- 4	4	            1.6
+-- 5	5	            1.86
+-- 6	6	            1.82
+-- 7	7	            5.23
+
+-- Segregate the data into five segments of â€˜tip paidâ€™: [0-5), [5-10), [10-15) , [15-20) and >=20. 
+-- Calculate the percentage share of each bucket (i.e. the fraction of trips falling in each bucket).
+with t1 as (
+    select tip_amount,
+        (case 
+            when tip_amount >=0  and  tip_amount < 5  then '[0-5)'
+            when tip_amount >=5  and  tip_amount < 10 then '[5-10)'
+            when tip_amount >=10 and  tip_amount < 15 then '[10-15)'
+            when tip_amount >=15 and  tip_amount < 20 then '[15-20)'
+            when tip_amount >=20 then '>=20'
+        end) as tip_segment
+        from nyc_taxi_assignment_anirban_pooja_partition_orc
+    ),
+t2 as (
+    select tip_segment, count(*) as count_tip_bucket    
+    from t1
+    group by tip_segment
+    ),
+t3 as (
+    select count(*) as total_count 
+    from nyc_taxi_assignment_anirban_pooja_partition_orc
+    )
+select t2.tip_segment, round(((t2.count_tip_bucket/t3.total_count)*100),2) as precentage
+from t2,t3
+order by precentage desc;
+--  	t2.tip_segment	precentage
+-- 1	[0-5)	        92.4
+-- 2	[5-10)	        5.64
+-- 3	[10-15)	        1.68
+-- 4	[15-20)	        0.19
+-- 5	>=20	        0.09
+-- Highest percentage of tip paid in 0-5 range which is 92.4%.
+
+-- Which month has a greater average â€˜speedâ€™ - November or December? 
+select mnth, round(avg(trip_distance / ((unix_timestamp(tpep_dropoff_datetime) - unix_timestamp(tpep_pickup_datetime))/3600)),2) as avg_speed
+from nyc_taxi_assignment_anirban_pooja_partition_orc
+group by mnth;
+-- December has the greater avg speed.
+--  	mnth	avg_speed
+-- 1	11	    10.97
+-- 2	12	    11.07
+
+-- Analyse the average speed of the most happening days of the year, 
+-- i.e. 31st December (New yearâ€™s eve) and 25th December (Christmas) and compare it with the overall average. 
+select round(avg(trip_distance / ((unix_timestamp(tpep_dropoff_datetime) - unix_timestamp(tpep_pickup_datetime))/3600)),2) as avg_speed
+from nyc_taxi_assignment_anirban_pooja_partition_orc;
+-- Overall avg speed of the month is 11.02 miles/hour
+--  	avg_speed
+-- 1	11.02
+
+-- Checking the average speed of 25th and 31st December.
+select round(avg(trip_distance / ((unix_timestamp(tpep_dropoff_datetime) - unix_timestamp(tpep_pickup_datetime))/3600)),2) as avg_speed
+from nyc_taxi_assignment_anirban_pooja_partition_orc
+where mnth = 12 and
+day(tpep_pickup_datetime) in (25,31);
+-- Average speed of 31st and 25th December is 14.03 miles/hour which is greater than overall average speed.
+--  	avg_speed
+-- 1	14.03
+
+
